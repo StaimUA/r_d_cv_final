@@ -112,7 +112,7 @@ def main():
                       
             # Gaussian noise
             mean = random.randint(-5, 5)
-            std  = random.randint(5, 30)
+            std = round(random.uniform(5, 30), 2)
             gauss_img = add_gaussian_noise(img, mean=mean, std=std)
             gauss_filename = os.path.splitext(os.path.basename(path))[0] + '_gauss.jpg'
             gauss_outpath = os.path.join(out_dir, gauss_filename)
@@ -140,7 +140,12 @@ def main():
             ])
             
             # Salt & Pepper noise
-            sp_prob = round(random.uniform(0.01, 0.05), 3)
+
+            if random.random() < 0.5:
+                sp_prob = round(random.uniform(0.01, 0.02), 3)
+            else:
+                sp_prob = round(random.uniform(0.03, 0.05), 3)
+
             sp_img = add_salt_and_pepper_noise(img, prob=sp_prob)
             sp_filename = os.path.splitext(os.path.basename(path))[0] + '_sp.jpg'
             sp_outpath = os.path.join(out_dir, sp_filename)
