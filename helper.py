@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr
 from skimage.metrics import structural_similarity as compute_ssim
 
+# Load images, resize and make augmentation
 def load_and_preprocess_image_no_aug(img_path, resize_to=True):
     img = cv2.imread(img_path)
     if img is None:
@@ -23,86 +24,96 @@ def load_and_preprocess_image_no_aug(img_path, resize_to=True):
     img = img.astype(np.float32) / 255.0
     return img
 
+
+# Create random but equal augment parameters for noised and original images
 def generate_augmentation_params():
-    """Generates random augmentation parameters for an image."""
-    params = {
-        "flip": random.random() < 0.5,
-        "angle": random.randint(-10, 10) if random.random() < 0.5 else 0,
-        "scale": round(random.uniform(0.8, 1.2), 2) if random.random() < 0.5 else 1.0,
-    }
-    return params
+"""Generates random augmentation parameters for an image."""
+params = {
+    "flip": random.random() < 0.5,
+    "angle": random.randint(-10, 10) if random.random() < 0.5 else 0,
+    "scale": round(random.uniform(0.8, 1.2), 2) if random.random() < 0.5 else 1.0,
+}
+return params
 
+# Augment images 
 def augment_image(img, augment_params):
-    """Applies augmentation to an image given the augmentation parameters"""
-    if augment_params:
-        if augment_params["flip"]:
-            img = cv2.flip(img, 1)  # horizontal flip
+"""Applies augmentation to an image given the augmentation parameters"""
+if augment_params:
+    
+    # flip image if true
+    if augment_params["flip"]:
+        img = cv2.flip(img, 1)  # horizontal flip
+    
+    # rotate image if params > 0
+    if augment_params["angle"] != 0:
+        angle = augment_params["angle"]  # rotation angle
+        rows, cols = img.shape[:2]
+        M = cv2.getRotationMatrix2D((cols / 2, rows / 2), angle, 1)
+        img = cv2.warpAffine(img, M, (cols, rows))
 
-        if augment_params["angle"] != 0:
-            angle = augment_params["angle"]  # rotation angle
-            rows, cols = img.shape[:2]
-            M = cv2.getRotationMatrix2D((cols / 2, rows / 2), angle, 1)
-            img = cv2.warpAffine(img, M, (cols, rows))
+    # scale image if param -ne 1
+    if augment_params["scale"] != 1.0:
+        scale = augment_params["scale"]
+        rows, cols = img.shape[:2]
+        M = cv2.getRotationMatrix2D((cols / 2, rows / 2), 0, scale)
+        img = cv2.warpAffine(img, M, (cols, rows))
 
-        if augment_params["scale"] != 1.0:
-            scale = augment_params["scale"]
-            rows, cols = img.shape[:2]
-            M = cv2.getRotationMatrix2D((cols / 2, rows / 2), 0, scale)
-            img = cv2.warpAffine(img, M, (cols, rows))
+return img
 
-    return img
 
 def generator_from_csv(csv_path, batch_size=8, shuffle=True, augment=False):
-    # Read all rows from CSV
-    with open(csv_path, 'r', newline='') as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        rows = list(reader)
+# Read all rows from CSV
+with open(csv_path, 'r', newline='') as f:
+    reader = csv.reader(f)
+    header = next(reader)
+    rows = list(reader)
+
+# shuffle once at start
+if shuffle:
+    random.shuffle(rows)
+
+idx = 0
+n = len(rows)
+
+while True:
+    noisy_batch = []
+    original_batch = []
     
-    # shuffle once at start
-    if shuffle:
-        random.shuffle(rows)
-    
-    idx = 0
-    n = len(rows)
-    
-    while True:
-        noisy_batch = []
-        original_batch = []
+    for _ in range(batch_size):
+        if idx >= n:
+            idx = 0
+            if shuffle:
+                random.shuffle(rows)
         
-        for _ in range(batch_size):
-            if idx >= n:
-                idx = 0
-                if shuffle:
-                    random.shuffle(rows)
-            
-            row = rows[idx]
-            noisy_path = row[0]
-            original_path = row[1]
+        row = rows[idx]
+        noisy_path = row[0]
+        original_path = row[1]
 
-            # Load the images
-            noisy_img = load_and_preprocess_image_no_aug(noisy_path)
-            original_img = load_and_preprocess_image_no_aug(original_path)
+        # Load the images without augmentation (for final vizualization)
+        noisy_img = load_and_preprocess_image_no_aug(noisy_path)
+        original_img = load_and_preprocess_image_no_aug(original_path)
 
-            if augment:
-              augment_params = generate_augmentation_params()
-              noisy_img = augment_image(noisy_img, augment_params)
-              original_img = augment_image(original_img, augment_params)
-                       
-            # If any load fails, skip
-            if noisy_img is None or original_img is None:
-                idx += 1
-                continue
-            
-            noisy_batch.append(noisy_img)
-            original_batch.append(original_img)
-            
+        # apply augmentation for training
+        if augment:
+          augment_params = generate_augmentation_params()
+          noisy_img = augment_image(noisy_img, augment_params)
+          original_img = augment_image(original_img, augment_params)
+                   
+        # If any load fails, skip
+        if noisy_img is None or original_img is None:
             idx += 1
+            continue
         
-        yield (np.array(noisy_batch, dtype=np.float32),
-               np.array(original_batch, dtype=np.float32))
+        # append images to batches for training
+        noisy_batch.append(noisy_img)
+        original_batch.append(original_img)
+        
+        idx += 1
+    
+    yield (np.array(noisy_batch, dtype=np.float32),
+           np.array(original_batch, dtype=np.float32))
 
-
+# function to get noisy params for the distribution analysis
 def extract_noise_parameters(csv_path):
     """
     Extracts noise parameters from a CSV file.
@@ -139,16 +150,14 @@ def extract_noise_parameters(csv_path):
     
     return gaussian_means, gaussian_stds, poisson_scales, sp_probs
 
+# plot the noisy distribution across all sets
 def plot_noise_distributions(train_params, val_params, test_params):
     """
     Plots the distributions of noise parameters from the different datasets.
-
     """
-    
     train_gaussian_means, train_gaussian_stds, train_poisson_scales, train_sp_probs = train_params
     val_gaussian_means,   val_gaussian_stds,   val_poisson_scales,   val_sp_probs   = val_params
     test_gaussian_means,  test_gaussian_stds,  test_poisson_scales,  test_sp_probs  = test_params
-    
     
     #Parameter lists and titles
     params = [
@@ -158,6 +167,7 @@ def plot_noise_distributions(train_params, val_params, test_params):
         ([train_sp_probs, val_sp_probs, test_sp_probs], 'Salt-and-Pepper noise Probability', 'Probability')
     ]
     
+    # set colors for bins
     colors = ['skyblue', 'lightcoral', 'lightgreen']
 
     for i, (data, title, xlabel) in enumerate(params):
@@ -178,7 +188,7 @@ def plot_noise_distributions(train_params, val_params, test_params):
         plt.tight_layout()
         plt.show()
 
-
+# function to show denoisng result after training
 def visualize_denoising_results(model, generator, num_images=3):
     for i in range(num_images):
 
@@ -200,7 +210,7 @@ def visualize_denoising_results(model, generator, num_images=3):
         gaussian_uint8 = cv2.GaussianBlur(noisy_uint8, (3, 3), 0)
         gaussian_img = gaussian_uint8.astype(np.float32) / 255.0  # Scale back to [0,1]
         
-        # Compute PSNR for both methods
+        # Compute PSNR for both pictures
         model_psnr = compute_psnr(original_img, denoised_img, data_range=1.0)
         gaussian_psnr = compute_psnr(original_img, gaussian_img, data_range=1.0)
         
@@ -208,6 +218,7 @@ def visualize_denoising_results(model, generator, num_images=3):
         model_ssim = compute_ssim(original_img, denoised_img, channel_axis=2, data_range=1.0)
         gaussian_ssim = compute_ssim(original_img, gaussian_img, channel_axis=2, data_range=1.0)
         
+        # plot pictures
         plt.figure(figsize=(20, 5))
         
         plt.subplot(1, 4, 1)
